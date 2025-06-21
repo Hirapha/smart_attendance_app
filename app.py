@@ -33,7 +33,7 @@ if not st.session_state.authenticated:
 
     tabs = st.tabs(["ログイン", "新規登録"])
 
-    with tabs[0]:  # 🔐 ログイン
+    with tabs[0]:  # ログイン画面
         st.subheader("ログイン")
         username = st.text_input("ユーザー名", key="login_user")
         password = st.text_input("パスワード", type="password", key="login_pass")
@@ -51,7 +51,7 @@ if not st.session_state.authenticated:
             else:
                 st.error("ユーザー名またはパスワードが違います。")
 
-    with tabs[1]:  # 🆕 新規登録
+    with tabs[1]:  # 新規登録画面
         st.subheader("新規ユーザー登録")
         new_username = st.text_input("新しいユーザー名", key="new_user")
         new_password = st.text_input("パスワード", type="password", key="new_pass")
@@ -78,9 +78,7 @@ if "last_time" not in st.session_state:
 if "pending_entry" not in st.session_state:
     st.session_state.pending_entry = None
 
-# -----------------------
 # 打刻処理
-# -----------------------
 if st.session_state.last_time:
     st.info(f"開始時刻を記録しました：{st.session_state.last_time.strftime('%H:%M')}")
 if st.button("🔘 打刻") and not st.session_state.input_mode:
@@ -92,7 +90,7 @@ if st.button("🔘 打刻") and not st.session_state.input_mode:
             "end": now
         }
         clear_pending_start(st.session_state.username)
-        st.session_state.input_mode = True  # 入力欄を表示する
+        st.session_state.input_mode = True
         st.session_state.last_time = None
     else:
         st.session_state.last_time = now
@@ -116,17 +114,15 @@ if st.session_state.input_mode and st.session_state.pending_entry:
         )
         st.success("保存完了しました！")
         st.session_state.pending_entry = None
-        st.session_state.input_mode = False  # 入力欄を閉じる
+        st.session_state.input_mode = False
 
 
 st.divider()
 
 st.header("📅 カレンダーから記録を見る")
 
-# ユーザーが過去の日付を選択できるようにする
 selected_date = st.date_input("日付を選択", value=date.today())
 
-# 選択された日付の作業履歴を表示
 st.header(f"📖 {selected_date.strftime('%Y-%m-%d')} の作業履歴")
 entries = get_entries_by_date(st.session_state.username, selected_date.isoformat())
 
@@ -182,7 +178,7 @@ if st.button("📥 請求書を生成"):
     if uploaded_file is None:
         st.info("アップロードされたファイルはありません")
     else:
-        entries = get_entries_by_month(st.session_state.username, target_month)  # ← utils.db 側に追加が必要
+        entries = get_entries_by_month(st.session_state.username, target_month) 
         monthly_total_hours = sum(sum(e['duration'] for e in v) for v in entries.values()) / 60
         invoice_ws = wb["請求書"]
         report_ws = wb["稼働時間報告書（時間単価の場合提出）"]
@@ -193,16 +189,15 @@ if st.button("📥 請求書を生成"):
 
             task_lines = [f"- {t['title']}（{math.floor(t['duration'] / 6) / 10:.1f}h）" for t in tasks]
             total_hours = sum(t['duration'] for t in tasks) / 60
-            total_hours = math.floor(total_hours * 10) / 10  # 小数点第2位以下を切り捨て
+            total_hours = math.floor(total_hours * 10) / 10
 
             report_ws[f"D{row}"] = "\n".join(task_lines)
             report_ws[f"C{row}"] = total_hours
 
-        # 月全体の合計時間（小数点第2位以下切り捨て）
         monthly_total_hours = math.floor(monthly_total_hours * 10) / 10
         report_ws["C38"] = monthly_total_hours
 
-        # 請求書シート
+
         invoice_ws["C25"] = task_label
         invoice_ws["I25"] = unit_price
         invoice_ws["G25"] = total_hours
