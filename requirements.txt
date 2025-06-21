@@ -1,0 +1,4 @@
+streamlit
+openai
+pandas
+sqlite3  # 標準ライブラリだが明示してもOK
