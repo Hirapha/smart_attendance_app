@@ -1,7 +1,6 @@
 import streamlit as st
 from datetime import datetime, date
 from utils.db import *
-from utils.report import generate_daily_report
 from utils.auth import init_user_db, verify_user, add_user
 from openpyxl import load_workbook
 from io import BytesIO
