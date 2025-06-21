@@ -5,9 +5,12 @@ from utils.report import generate_daily_report
 from utils.auth import init_user_db, verify_user, add_user
 from openpyxl import load_workbook
 from io import BytesIO
+import math
+
 
 init_user_db()
 init_db()
+init_pending_log_table()
 today = date.today().isoformat()
 st.set_page_config(page_title="スマート勤怠", layout="wide")
 
@@ -39,6 +42,10 @@ if not st.session_state.authenticated:
             if verify_user(username, password):
                 st.session_state.authenticated = True
                 st.session_state.username = username
+                st.session_state.just_logged_in = True
+                if "just_logged_in" in st.session_state and st.session_state.just_logged_in:
+                    st.session_state.last_time = get_pending_start(st.session_state.username)
+                    st.session_state.just_logged_in = False
                 st.success("ログイン成功！")
                 st.rerun()
             else:
@@ -55,7 +62,7 @@ if not st.session_state.authenticated:
                 st.warning("ユーザー名とパスワードを入力してください。")
             elif new_password != confirm:
                 st.warning("パスワードが一致しません。")
-            elif verify_user(new_username, new_password):
+            elif user_exists(new_username):
                 st.error("このユーザー名はすでに使われています。")
             else:
                 add_user(new_username, new_password)
@@ -74,18 +81,22 @@ if "pending_entry" not in st.session_state:
 # -----------------------
 # 打刻処理
 # -----------------------
+if st.session_state.last_time:
+    st.info(f"開始時刻を記録しました：{st.session_state.last_time.strftime('%H:%M')}")
 if st.button("🔘 打刻") and not st.session_state.input_mode:
     now = datetime.now()
-    if st.session_state.last_time:
+    pending_start = get_pending_start(st.session_state.username)
+    if pending_start:
         st.session_state.pending_entry = {
             "start": st.session_state.last_time,
             "end": now
         }
-        st.session_state.last_time = now
+        clear_pending_start(st.session_state.username)
         st.session_state.input_mode = True  # 入力欄を表示する
         st.session_state.last_time = None
     else:
         st.session_state.last_time = now
+        save_pending_start(st.session_state.username, now.isoformat())
         st.info(f"開始時刻を記録しました：{now.strftime('%H:%M')}")
 
 if st.session_state.input_mode and st.session_state.pending_entry:
@@ -154,6 +165,11 @@ else:
     st.info("この日にはまだ作業記録がありません。")
 
 st.header("📤 請求書を自動生成")
+
+uploaded_file = st.file_uploader("請求書テンプレートをアップロード", type=["xlsx"])
+if uploaded_file is not None:
+    wb = load_workbook(uploaded_file)
+
 task_label = st.text_input("全体の作業タイトル", value="例) 通常業務")
 this_year = date.today().year
 this_month = date.today().month
@@ -163,29 +179,47 @@ target_month = f"{year}-{month:02d}"
 unit_price = st.number_input("時間給（円）", min_value=0, step=100, value=3000)
 
 if st.button("📥 請求書を生成"):
-    entries = get_entries_by_month(st.session_state.username, target_month)  # ← utils.db 側に追加が必要
-    monthly_total_hours = sum(sum(e['duration'] for e in v) for v in entries.values()) / 60
-    wb = load_workbook("invoice_template.xlsx")
-    invoice_ws = wb["請求書"]
-    report_ws = wb["稼働時間報告書（時間単価の場合提出）"]
+    if uploaded_file is None:
+        st.info("アップロードされたファイルはありません")
+    else:
+        entries = get_entries_by_month(st.session_state.username, target_month)  # ← utils.db 側に追加が必要
+        monthly_total_hours = sum(sum(e['duration'] for e in v) for v in entries.values()) / 60
+        invoice_ws = wb["請求書"]
+        report_ws = wb["稼働時間報告書（時間単価の場合提出）"]
 
-    for date_str, tasks in entries.items():
-        day = int(date_str.split("-")[2])
-        row = day + 6
-        task_lines = [f"- {t['title']}（{t['duration']/60:.1f}h）" for t in tasks]
-        total_hours = sum(t['duration'] for t in tasks) / 60
-        report_ws[f"D{row}"] = "\n".join(task_lines)
-        report_ws[f"C{row}"] = total_hours
+        for date_str, tasks in entries.items():
+            day = int(date_str.split("-")[2])
+            row = day + 6
 
-    report_ws["C38"] = monthly_total_hours
-    invoice_ws["C25"] = task_label
-    invoice_ws["I25"] = unit_price
-    invoice_ws["K26"] = unit_price * monthly_total_hours
-    invoice_ws["I26"] = invoice_ws["K26"].value * 1.1
+            task_lines = [f"- {t['title']}（{math.floor(t['duration'] / 6) / 10:.1f}h）" for t in tasks]
+            total_hours = sum(t['duration'] for t in tasks) / 60
+            total_hours = math.floor(total_hours * 10) / 10  # 小数点第2位以下を切り捨て
 
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    filename = f"請求書_{target_month.replace('-', '')}.xlsx"
-    st.download_button("📤 ダウンロード", data=output, file_name=filename,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            report_ws[f"D{row}"] = "\n".join(task_lines)
+            report_ws[f"C{row}"] = total_hours
+
+        # 月全体の合計時間（小数点第2位以下切り捨て）
+        monthly_total_hours = math.floor(monthly_total_hours * 10) / 10
+        report_ws["C38"] = monthly_total_hours
+
+        # 請求書シート
+        invoice_ws["C25"] = task_label
+        invoice_ws["I25"] = unit_price
+        invoice_ws["G25"] = total_hours
+
+        subtotal = unit_price * monthly_total_hours
+        subtotal = math.floor(subtotal * 10) / 10
+        invoice_ws["K26"] = subtotal
+
+        tax_included = math.floor(subtotal * 11) / 10
+        invoice_ws["J26"] = tax_included
+        invoice_ws["D16"] = f"{year}年　{month+2}月　1日"
+        invoice_ws["I4"] = f"発行日：{year}年　{month}月　{date.today().day}日"
+
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"請求書_{target_month.replace('-', '')}.xlsx"
+        st.download_button("📤 ダウンロード", data=output, file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

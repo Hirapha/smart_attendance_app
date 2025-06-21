@@ -1,13 +1,17 @@
 import sqlite3
 from datetime import datetime
 import os
+import bcrypt
+
 
 DB_NAME = "worklog.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "../worklog.db")
+USER_DB_NAME = "users.db"
+USER_DB_PATH = os.path.join(BASE_DIR, "../users.db")
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS worklog (
@@ -25,7 +29,7 @@ def init_db():
 
 
 def insert_entry(username, date, start, end, title, memo):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         "INSERT INTO worklog (username, date, start, end, title, memo) VALUES (?, ?, ?, ?, ?, ?)",
@@ -83,14 +87,22 @@ def verify_user(username, password):
     conn.close()
     return user is not None
 
-def add_user(username, password):
+def user_exists(username):
     conn = sqlite3.connect(USER_DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+    c.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+    exists = c.fetchone() is not None
+    conn.close()
+    return exists
+
+def add_user(username, password):
+    hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    conn = sqlite3.connect(USER_DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
     conn.commit()
     conn.close()
 
-import sqlite3
 
 def get_entries_by_month(username, year_month):
     """
@@ -118,3 +130,37 @@ def get_entries_by_month(username, year_month):
             result[date_str] = []
         result[date_str].append({"title": title, "duration": duration})
     return result
+
+def init_pending_log_table():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pending_log (
+            username TEXT PRIMARY KEY,
+            start_time TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_pending_start(username, start_time):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('REPLACE INTO pending_log (username, start_time) VALUES (?, ?)', (username, start_time))
+    conn.commit()
+    conn.close()
+
+def get_pending_start(username):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT start_time FROM pending_log WHERE username = ?', (username,))
+    row = c.fetchone()
+    conn.close()
+    return datetime.fromisoformat(row[0]) if row else None
+
+def clear_pending_start(username):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM pending_log WHERE username = ?', (username,))
+    conn.commit()
+    conn.close()
