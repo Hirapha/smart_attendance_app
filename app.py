@@ -199,7 +199,7 @@ if st.button("📥 請求書を生成"):
 
         invoice_ws["C25"] = task_label
         invoice_ws["I25"] = unit_price
-        invoice_ws["G25"] = total_hours
+        invoice_ws["G25"] = monthly_total_hours
 
         subtotal = unit_price * monthly_total_hours
         subtotal = math.floor(subtotal * 10) / 10
